@@ -44,6 +44,22 @@ final class DefaultReminderService: ReminderService {
             .eraseToAnyPublisher()
     }
     
+    // OU
+    
+    func remindersPublisher() -> AnyPublisher<[Reminder], Never> {
+            // Criamos um array de 3 futures dinamicamente
+        let tasks = (1...3).map { _ in
+            Future<[Reminder], Never> { promise in
+                self.dataSource.fetchReminders { promise(.success($0)) }
+            }
+        }
+        
+        return Publishers.MergeMany(tasks)
+            .collect() // Transforma Stream de [Reminder] em [[Reminder]]
+            .map { $0.flatMap { $0 } } // Achata (flatten) para [Reminder]
+            .eraseToAnyPublisher()
+    }
+    
         // 3. Paradigm: Swift Concurrency (TaskGroup para paralelismo estruturado)
     func fetchRemindersAsync() async -> [Reminder] {
         await withTaskGroup(of: [Reminder].self) { group in
@@ -61,6 +77,21 @@ final class DefaultReminderService: ReminderService {
             }
             
             return allReminders
+        }
+    }
+    
+    // OU
+    
+    func fetchRemindersAsync() async -> [Reminder] {
+        await withTaskGroup(of: [Reminder].self) { group in
+            for _ in 0..<3 {
+                group.addTask { await self.dataSource.fetchReminders() }
+            }
+            
+                // Em vez de um loop manual com append, reduzimos os resultados
+            return await group.reduce(into: []) { all, page in
+                all.append(contentsOf: page)
+            }
         }
     }
 }
