@@ -12,7 +12,7 @@ final class DefaultReminderService: ReminderService {
     func fetchReminders(completion: @escaping ([Reminder]) -> Void) {
         let group = DispatchGroup()
         var allReminders: [Reminder] = []
-        let lock = NSLock() // Protege o acesso ao array em paralelo
+        let lock = NSLock()
         
         for _ in 0 ..< 3 {
             group.enter()
@@ -29,14 +29,34 @@ final class DefaultReminderService: ReminderService {
         }
     }
     
+    // OU
+    
+    func fetchReminders(completion: @escaping ([Reminder]) -> Void) {
+        let group = DispatchGroup()
+        let queue = DispatchQueue(label: "queue")
+        var allReminders: [Reminder] = []
+        
+        for _ in 0 ..< 3 {
+            group.enter()
+            dataSource.fetchReminders { newReminders in
+                queue.async {
+                    allReminders.append(contentsOf: newReminders)
+                    group.leave()
+                }
+            }
+        }
+        
+        group.notify(queue: .main) {
+            completion(allReminders)
+        }
+    }
+    
         // 2. Paradigm: Combine (Zip para aguardar múltiplos Publishers)
     func remindersPublisher() -> AnyPublisher<[Reminder], Never> {
-            // Criamos 3 Futures (um para cada página)
         let page1 = Future<[Reminder], Never> { promise in self.dataSource.fetchReminders { promise(.success($0)) } }
         let page2 = Future<[Reminder], Never> { promise in self.dataSource.fetchReminders { promise(.success($0)) } }
         let page3 = Future<[Reminder], Never> { promise in self.dataSource.fetchReminders { promise(.success($0)) } }
         
-            // Zip combina os resultados e emite quando todos terminarem
         return Publishers.Zip3(page1, page2, page3)
             .map { p1, p2, p3 in
                 return p1 + p2 + p3
@@ -55,15 +75,15 @@ final class DefaultReminderService: ReminderService {
         }
         
         return Publishers.MergeMany(tasks)
-            .collect() // Transforma Stream de [Reminder] em [[Reminder]]
-            .map { $0.flatMap { $0 } } // Achata (flatten) para [Reminder]
+            .collect()
+            .map { $0.flatMap { $0 } }
             .eraseToAnyPublisher()
     }
     
         // 3. Paradigm: Swift Concurrency (TaskGroup para paralelismo estruturado)
     func fetchRemindersAsync() async -> [Reminder] {
         await withTaskGroup(of: [Reminder].self) { group in
-                // Dispara as 3 tarefas em paralelo
+                
             for _ in 0..<3 {
                 group.addTask {
                     await self.dataSource.fetchReminders()
@@ -71,7 +91,7 @@ final class DefaultReminderService: ReminderService {
             }
             
             var allReminders: [Reminder] = []
-                // Coleta os resultados conforme terminam
+                
             for await page in group {
                 allReminders.append(contentsOf: page)
             }
@@ -88,7 +108,6 @@ final class DefaultReminderService: ReminderService {
                 group.addTask { await self.dataSource.fetchReminders() }
             }
             
-                // Em vez de um loop manual com append, reduzimos os resultados
             return await group.reduce(into: []) { all, page in
                 all.append(contentsOf: page)
             }
